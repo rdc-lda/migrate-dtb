@@ -13,12 +13,16 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database"
 	"github.com/golang-migrate/migrate/v4/source"
+	"github.com/magiconair/properties"
 )
 
 const defaultTimeFormat = "20060102150405"
 
 // set main log
 var log = &Log{}
+
+// Set placeholder config file
+var placeholderDef = properties.NewProperties()
 
 func Main(version string) {
 	helpPtr := flag.Bool("help", false, "")
@@ -29,6 +33,7 @@ func Main(version string) {
 	pathPtr := flag.String("path", "", "")
 	databasePtr := flag.String("database", "", "")
 	sourcePtr := flag.String("source", "", "")
+	placeholderPtr := flag.String("placeholder", "", "")
 
 	flag.Usage = func() {
 		fmt.Fprint(os.Stderr,
@@ -37,6 +42,7 @@ func Main(version string) {
 
 Options:
   -source          Location of the migrations (driver://url)
+  -placeholder     Property file with keys for runtime value injection into SQL
   -path            Shorthand for -source=file://path
   -database        Run migrations against this database (driver://url)
   -prefetch N      Number of migrations to load in advance before executing (default 10)
@@ -83,10 +89,20 @@ Database drivers: `+strings.Join(database.List(), ", ")+"\n")
 		*sourcePtr = fmt.Sprintf("file://%v", *pathPtr)
 	}
 
+	// Check if specified placeholder file exists
+	if *placeholderPtr != "" {
+		if _, err := os.Stat(*placeholderPtr); err == nil {
+			placeholderDef = properties.MustLoadFile(*placeholderPtr, properties.UTF8)
+		} else {
+			fmt.Printf("Placeholder file %s cannot be found\n\n", *placeholderPtr)
+			os.Exit(1)
+		}
+	}
+
 	// initialize migrate
 	// don't catch migraterErr here and let each command decide
 	// how it wants to handle the error
-	migrater, migraterErr := migrate.New(*sourcePtr, *databasePtr)
+	migrater, migraterErr := migrate.New(*sourcePtr, *databasePtr, *placeholderDef)
 	defer func() {
 		if migraterErr == nil {
 			if _, err := migrater.Close(); err != nil {

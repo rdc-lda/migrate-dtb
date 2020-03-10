@@ -32,6 +32,7 @@ require (
 	github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0 // indirect
 	github.com/konsorten/go-windows-terminal-sequences v1.0.2 // indirect
 	github.com/lib/pq v1.3.0
+	github.com/magiconair/properties v1.8.1
 	github.com/mattn/go-sqlite3 v1.10.0
 	github.com/nakagami/firebirdsql v0.0.0-20190310045651-3c02a58cfed8
 	github.com/neo4j-drivers/gobolt v1.7.4 // indirect

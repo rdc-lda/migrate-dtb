@@ -5,13 +5,18 @@
 package migrate
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
+	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/hashicorp/go-multierror"
+	"github.com/magiconair/properties"
 
 	"github.com/golang-migrate/migrate/v4/database"
 	iurl "github.com/golang-migrate/migrate/v4/internal/url"
@@ -56,10 +61,11 @@ func (e ErrDirty) Error() string {
 }
 
 type Migrate struct {
-	sourceName   string
-	sourceDrv    source.Driver
-	databaseName string
-	databaseDrv  database.Driver
+	sourceName     string
+	sourceDrv      source.Driver
+	databaseName   string
+	databaseDrv    database.Driver
+	placeholderDef properties.Properties
 
 	// Log accepts a Logger interface
 	Log Logger
@@ -84,7 +90,7 @@ type Migrate struct {
 
 // New returns a new Migrate instance from a source URL and a database URL.
 // The URL scheme is defined by each driver.
-func New(sourceURL, databaseURL string) (*Migrate, error) {
+func New(sourceURL, databaseURL string, propertySource properties.Properties) (*Migrate, error) {
 	m := newCommon()
 
 	sourceName, err := iurl.SchemeFromURL(sourceURL)
@@ -110,6 +116,8 @@ func New(sourceURL, databaseURL string) (*Migrate, error) {
 		return nil, err
 	}
 	m.databaseDrv = databaseDrv
+
+	m.placeholderDef = propertySource
 
 	return m, nil
 }
@@ -118,7 +126,7 @@ func New(sourceURL, databaseURL string) (*Migrate, error) {
 // and an existing database instance. The source URL scheme is defined by each driver.
 // Use any string that can serve as an identifier during logging as databaseName.
 // You are responsible for closing the underlying database client if necessary.
-func NewWithDatabaseInstance(sourceURL string, databaseName string, databaseInstance database.Driver) (*Migrate, error) {
+func NewWithDatabaseInstance(sourceURL string, databaseName string, databaseInstance database.Driver, propertySource properties.Properties) (*Migrate, error) {
 	m := newCommon()
 
 	sourceName, err := iurl.SchemeFromURL(sourceURL)
@@ -137,6 +145,8 @@ func NewWithDatabaseInstance(sourceURL string, databaseName string, databaseInst
 
 	m.databaseDrv = databaseInstance
 
+	m.placeholderDef = propertySource
+
 	return m, nil
 }
 
@@ -144,7 +154,7 @@ func NewWithDatabaseInstance(sourceURL string, databaseName string, databaseInst
 // and a database URL. The database URL scheme is defined by each driver.
 // Use any string that can serve as an identifier during logging as sourceName.
 // You are responsible for closing the underlying source client if necessary.
-func NewWithSourceInstance(sourceName string, sourceInstance source.Driver, databaseURL string) (*Migrate, error) {
+func NewWithSourceInstance(sourceName string, sourceInstance source.Driver, databaseURL string, propertySource properties.Properties) (*Migrate, error) {
 	m := newCommon()
 
 	databaseName, err := iurl.SchemeFromURL(databaseURL)
@@ -163,6 +173,8 @@ func NewWithSourceInstance(sourceName string, sourceInstance source.Driver, data
 
 	m.sourceDrv = sourceInstance
 
+	m.placeholderDef = propertySource
+
 	return m, nil
 }
 
@@ -170,7 +182,7 @@ func NewWithSourceInstance(sourceName string, sourceInstance source.Driver, data
 // database instance. Use any string that can serve as an identifier during logging
 // as sourceName and databaseName. You are responsible for closing down
 // the underlying source and database client if necessary.
-func NewWithInstance(sourceName string, sourceInstance source.Driver, databaseName string, databaseInstance database.Driver) (*Migrate, error) {
+func NewWithInstance(sourceName string, sourceInstance source.Driver, databaseName string, databaseInstance database.Driver, propertySource properties.Properties) (*Migrate, error) {
 	m := newCommon()
 
 	m.sourceName = sourceName
@@ -178,6 +190,8 @@ func NewWithInstance(sourceName string, sourceInstance source.Driver, databaseNa
 
 	m.sourceDrv = sourceInstance
 	m.databaseDrv = databaseInstance
+
+	m.placeholderDef = propertySource
 
 	return m, nil
 }
@@ -832,6 +846,7 @@ func (m *Migrate) stop() bool {
 // specified version and targetVersion.
 func (m *Migrate) newMigration(version uint, targetVersion int) (*Migration, error) {
 	var migr *Migration
+	var p = m.placeholderDef
 
 	if targetVersion >= int(version) {
 		r, identifier, err := m.sourceDrv.ReadUp(version)
@@ -880,7 +895,27 @@ func (m *Migrate) newMigration(version uint, targetVersion int) (*Migration, err
 		m.logVerbosePrintf("Scheduled %v\n", migr.LogString())
 	}
 
-	return migr, nil
+	return renderSQLTemplate(migr, p)
+}
+
+func renderSQLTemplate(migr *Migration, p properties.Properties) (*Migration, error) {
+	// Set map with properties passed into method
+	placeholderMap := p.Map()
+
+	// Retrieve the original SQL body
+	origbody := new(bytes.Buffer)
+	origbody.ReadFrom(migr.Body)
+
+	// Instantiate templating engine, assure error is thrown when a key is missing
+	tmpl, err := template.New("sql").Parse(origbody.String())
+	tmpl.Option("missingkey=error")
+
+	// Apply the transformation
+	buf := &bytes.Buffer{}
+	err = tmpl.Execute(buf, placeholderMap)
+	migr.Body = ioutil.NopCloser(strings.NewReader(buf.String()))
+
+	return migr, err
 }
 
 // lock is a thread safe helper function to lock the database.
