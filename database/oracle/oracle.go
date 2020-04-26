@@ -419,15 +419,14 @@ func parseStatements(rd io.Reader, c *Config) ([]string, error) {
 			queries = append(queries, query)
 		}
 	} else {
-		re := regexp.MustCompile(";[[:space:]]*\n")
-		//queries = strings.Split(buf.String(), defaultStatementSeparator)
+		statementEndOfLineRegEx := defaultStatementSeparator + "[[:space:]]*\n"
+		re := regexp.MustCompile(statementEndOfLineRegEx)
 		queries = re.Split(buf.String(), -1)
 	}
 
 	results := make([]string, 0)
 	sLen := len(plsqlStatementEndToken)
 	for _, query := range queries {
-		// fmt.Println("query: ", query, "\n")
 		query = strings.TrimSpace(query)
 		query = strings.TrimPrefix(query, "\n")
 		query = strings.TrimSuffix(query, "\n")
